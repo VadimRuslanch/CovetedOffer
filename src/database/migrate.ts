@@ -3,29 +3,15 @@ import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
 import { FileMigrationProvider, Migrator } from 'kysely/migration';
 import { createDatabase } from './create-database.js';
+import dbConfig from '../config/database.config.js';
+import { validateEnv } from '../config/env.schema.js';
 
 const migrationFolder = fileURLToPath(new URL('./migrations', import.meta.url));
 
-function getEnv(name: string): string {
-  const value = process.env[name];
-
-  if (!value) {
-    throw new Error(`Missing environment variable: ${name}`);
-  }
-
-  return value;
-}
-
 async function migrateToLatest() {
-  const db = createDatabase({
-    host: getEnv('POSTGRES_HOST'),
-    port: Number(getEnv('POSTGRES_PORT')),
-    database: getEnv('POSTGRES_DB'),
-    user: getEnv('POSTGRES_USER'),
-    password: getEnv('POSTGRES_PASSWORD'),
-    max: 10,
-    statement_timeout: Number(getEnv('POSTGRES_STATEMENT_TIMEOUT_MS')),
-  });
+  validateEnv(process.env);
+
+  const db = createDatabase(dbConfig());
 
   const migrator = new Migrator({
     db,

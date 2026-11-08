@@ -1,28 +1,28 @@
-## Запуск проекта
+## Запуск
 
-### Требования
+Требуются Node.js, pnpm и Docker.
 
-- Node.js
-- pnpm
-- Docker
+Создайте `.env`:
 
-### Установка зависимостей
+```env
+PORT=3000
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=coveted_offer
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=change-me-123
+POSTGRES_STATEMENT_TIMEOUT_MS=5000
+JWT_ACCESS_SECRET=replace-with-at-least-32-characters
+JWT_REFRESH_SECRET=replace-with-a-different-secret-of-32-characters
+JWT_ACCESS_TTL_SECONDS=900
+JWT_REFRESH_TTL_SECONDS=2592000
+```
 
 ```bash
 pnpm install
-```
-
-Запустить PostgreSQL
-```bash
 docker compose up -d
-```
-
-Миграция:
-```bash
 pnpm migration:up
-```
-
-Старт приложения 
-```bash
 pnpm start:dev
 ```
+
+Миграции создают таблицы на пустой базе. Приложение доступно на `http://localhost:3000`.
