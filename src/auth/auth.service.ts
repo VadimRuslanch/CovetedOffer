@@ -4,26 +4,21 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto.js';
-import * as argon2 from 'argon2';
-import type { Database, JwtPayload, User } from '../types.js';
+import type { Database, User } from '../types.js';
 import { UsersRepository } from '../users/users.repository.js';
-import { JwtService } from '@nestjs/jwt';
 import { LoginDto } from './dto/login.dto.js';
 import { Inject } from '@nestjs/common';
-import type { ConfigType } from '@nestjs/config';
-import { randomUUID } from 'node:crypto';
-import jwtConfig from '../config/jwt.config.js';
 import { DATABASE } from '../database/database.module.js';
 import { Kysely, Transaction } from 'kysely';
+import { HashService } from './hash.service.js';
+import { TokenService } from './token.service.js';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly usersRepository: UsersRepository,
-    private readonly jwtService: JwtService,
-
-    @Inject(jwtConfig.KEY)
-    private readonly jwtOptions: ConfigType<typeof jwtConfig>,
+    private readonly hashService: HashService,
+    private readonly tokenService: TokenService,
 
     @Inject(DATABASE)
     private readonly db: Kysely<Database>,
@@ -35,7 +30,7 @@ export class AuthService {
   }> {
     await this.ensureLoginAvailable(dto.login);
     await this.ensureEmailAvailable(dto.email);
-    const passwordHash = await argon2.hash(dto.password);
+    const passwordHash = await this.hashService.hash(dto.password);
 
     const data = {
       login: dto.login,
@@ -49,8 +44,8 @@ export class AuthService {
     return this.db.transaction().execute(async (trx) => {
       const user = await this.usersRepository.createUser(data, trx);
 
-      const tokens = await this.issueTokens(user.id);
-      const refreshHash = await argon2.hash(tokens.refreshToken);
+      const tokens = await this.tokenService.issueTokens(user.id);
+      const refreshHash = await this.hashService.hash(tokens.refreshToken);
 
       await this.usersRepository.updateRefreshTokenHash(
         user.id,
@@ -67,7 +62,7 @@ export class AuthService {
     refreshToken: string;
   }> {
     const user = await this.validateCredentials(dto);
-    const tokens = await this.issueTokens(user.id);
+    const tokens = await this.tokenService.issueTokens(user.id);
     await this.hashAndUpdateRefreshToken(user.id, tokens.refreshToken);
     return tokens;
   }
@@ -77,26 +72,7 @@ export class AuthService {
   }
 
   async refresh(refreshToken: string) {
-    let jwt: { sub: number; token: string };
-
-    try {
-      jwt = await this.jwtService.verifyAsync<JwtPayload>(refreshToken, {
-        secret: this.jwtOptions.refreshSecret,
-      });
-    } catch {
-      throw new UnauthorizedException(
-        'Недействительный или просроченный refresh-токен',
-      );
-    }
-
-    if (
-      !Number.isSafeInteger(jwt.sub) ||
-      jwt.sub <= 0 ||
-      jwt.token !== 'refresh_token'
-    ) {
-      throw new UnauthorizedException('Недействительный refresh-токен');
-    }
-
+    const jwt = await this.tokenService.verifyRefreshToken(refreshToken);
     return this.db.transaction().execute(async (trx) => {
       const user = await this.usersRepository.findByIdForUpdate(jwt.sub, trx);
 
@@ -104,7 +80,7 @@ export class AuthService {
         throw new UnauthorizedException('Недействительный refresh-токен');
       }
 
-      const isValid = await argon2.verify(
+      const isValid = await this.hashService.verify(
         user.refresh_token_hash,
         refreshToken,
       );
@@ -113,7 +89,7 @@ export class AuthService {
         throw new UnauthorizedException('Недействительный refresh-токен');
       }
 
-      const tokens = await this.issueTokens(user.id);
+      const tokens = await this.tokenService.issueTokens(user.id);
       await this.hashAndUpdateRefreshToken(user.id, tokens.refreshToken, trx);
 
       return tokens;
@@ -143,7 +119,7 @@ export class AuthService {
       throw new UnauthorizedException('Неверный логин или пароль');
     }
 
-    const isPasswordValid = await argon2.verify(
+    const isPasswordValid = await this.hashService.verify(
       user.password_hash,
       dto.password,
     );
@@ -155,38 +131,12 @@ export class AuthService {
     return user;
   }
 
-  private async issueTokens(userID: number): Promise<{
-    accessToken: string;
-    refreshToken: string;
-  }> {
-    const [accessToken, refreshToken] = await Promise.all([
-      this.jwtService.signAsync(
-        {
-          sub: userID,
-          token: 'access_token',
-        },
-        {
-          secret: this.jwtOptions.accessSecret,
-          expiresIn: this.jwtOptions.accessTtl,
-        },
-      ),
-      this.jwtService.signAsync(
-        { sub: userID, token: 'refresh_token', jti: randomUUID() },
-        {
-          secret: this.jwtOptions.refreshSecret,
-          expiresIn: this.jwtOptions.refreshTtl,
-        },
-      ),
-    ]);
-    return { accessToken, refreshToken };
-  }
-
   private async hashAndUpdateRefreshToken(
     userId: number,
     refreshToken: string,
     db: Kysely<Database> | Transaction<Database> = this.db,
   ): Promise<void> {
-    const refreshTokenHash = await argon2.hash(refreshToken);
+    const refreshTokenHash = await this.hashService.hash(refreshToken);
     await this.usersRepository.updateRefreshTokenHash(
       userId,
       refreshTokenHash,
