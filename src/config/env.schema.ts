@@ -7,7 +7,7 @@ export const envSchema = z.object({
 
   PORT: z.coerce.number().int().positive(),
   POSTGRES_HOST: z.string(),
-  POSTGRES_PORT: z.string(),
+  POSTGRES_PORT: z.coerce.number().int().min(1).max(65535),
   POSTGRES_DB: z.string(),
   POSTGRES_USER: z.string().min(4),
   POSTGRES_PASSWORD: z.string().min(10),

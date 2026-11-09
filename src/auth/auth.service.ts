@@ -137,7 +137,7 @@ export class AuthService {
   }
 
   private async validateCredentials(dto: LoginDto): Promise<User> {
-    const user = await this.usersRepository.findByLogin(dto.login);
+    const user = await this.usersRepository.findActiveByLogin(dto.login);
 
     if (!user) {
       throw new UnauthorizedException('Неверный логин или пароль');

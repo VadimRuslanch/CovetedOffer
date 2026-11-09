@@ -26,3 +26,5 @@ pnpm start:dev
 ```
 
 Миграции создают таблицы на пустой базе. Приложение доступно на `http://localhost:3000`.
+
+Swagger UI доступен на `http://localhost:3000/docs`.
