@@ -8,11 +8,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
-import { CreateUserDto } from './dto/create-user.dto.js';
+import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import type { Response, Request } from 'express';
 import { JwtAccessGuard } from './guards/jwt-access.guard.js';
-import type { AuthenticatedRequest } from '../types.js';
+import type { AuthenticatedRequest } from '../../types.js';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -24,7 +24,12 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { AuthResponseDto } from './dto/auth-response.dto.js';
-import { ErrorResponseDto } from '../common/dto/error-response.dto.js';
+import { ErrorResponseDto } from '../../common/dto/error-response.dto.js';
+import {
+  clearRefreshCookie,
+  REFRESH_COOKIE_NAME,
+  setRefreshCookie,
+} from './refresh-cookie.helper.js';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -58,20 +63,14 @@ export class AuthController {
     type: ErrorResponseDto,
   })
   @Post('register')
-  async createUser(
-    @Body() createUserDto: CreateUserDto,
+  async register(
+    @Body() registerDto: RegisterDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{
-    accessToken: string;
-  }> {
+  ): Promise<AuthResponseDto> {
     const { accessToken, refreshToken } =
-      await this.authService.register(createUserDto);
-    response.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
-      path: '/auth',
-    });
+      await this.authService.register(registerDto);
+
+    setRefreshCookie(response, refreshToken);
     return { accessToken };
   }
 
@@ -105,15 +104,10 @@ export class AuthController {
   async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<{ accessToken: string }> {
+  ): Promise<AuthResponseDto> {
     const { accessToken, refreshToken } =
       await this.authService.login(loginDto);
-    response.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
-      path: '/auth',
-    });
+    setRefreshCookie(response, refreshToken);
     return { accessToken };
   }
 
@@ -129,14 +123,12 @@ export class AuthController {
   async logout(
     @Req() request: AuthenticatedRequest,
     @Res({ passthrough: true }) response: Response,
-  ) {
+  ): Promise<void> {
     const userId = request.user.sub;
 
     await this.authService.logout(userId);
 
-    response.clearCookie('refreshToken', {
-      path: '/auth',
-    });
+    clearRefreshCookie(response);
   }
 
   @ApiOperation({
@@ -166,22 +158,23 @@ export class AuthController {
   async refresh(
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
-  ) {
-    const refreshToken = request.cookies?.refreshToken;
+  ): Promise<AuthResponseDto> {
+    const currentRefreshToken: unknown = request.cookies?.[REFRESH_COOKIE_NAME];
 
-    if (!refreshToken) {
-      throw new UnauthorizedException('Refresh-токен отсутствует');
+    if (
+      typeof currentRefreshToken !== 'string' ||
+      currentRefreshToken.length === 0
+    ) {
+      throw new UnauthorizedException(
+        'Refresh-токен отсутствует или недействителен',
+      );
     }
 
-    const tokens = await this.authService.refresh(refreshToken);
+    const { accessToken, refreshToken } =
+      await this.authService.refresh(currentRefreshToken);
 
-    response.cookie('refreshToken', tokens.refreshToken, {
-      httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
-      path: '/auth',
-    });
+    setRefreshCookie(response, refreshToken);
 
-    return { accessToken: tokens.accessToken };
+    return { accessToken };
   }
 }

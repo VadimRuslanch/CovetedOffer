@@ -1,8 +1,8 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import jwtConfig from '../config/jwt.config.js';
+import jwtConfig from '../../config/jwt.config.js';
 import { randomUUID } from 'node:crypto';
-import type { JwtPayload } from '../types.js';
+import type { JwtPayload, TokenPair } from '../../types.js';
 import type { ConfigType } from '@nestjs/config';
 
 @Injectable()
@@ -13,10 +13,7 @@ export class TokenService {
     private readonly jwtOptions: ConfigType<typeof jwtConfig>,
   ) {}
 
-  async issueTokens(userID: number): Promise<{
-    accessToken: string;
-    refreshToken: string;
-  }> {
+  async issueTokens(userID: number): Promise<TokenPair> {
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(
         {
@@ -65,7 +62,7 @@ export class TokenService {
       payload = await this.jwtService.verifyAsync<JwtPayload>(token, {
         secret: secret,
       });
-    } catch (error) {
+    } catch {
       throw new UnauthorizedException(
         'Недействительный или просроченный токен',
       );

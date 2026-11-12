@@ -1,6 +1,6 @@
 import { Pool, type PoolConfig } from 'pg';
 import { Kysely, PostgresDialect } from 'kysely';
-import { type Database } from '../types.js';
+import { Database } from './database.types.js';
 
 export function createDatabase(config: PoolConfig): Kysely<Database> {
   const pool = new Pool(config);

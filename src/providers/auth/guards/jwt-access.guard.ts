@@ -4,7 +4,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import type { AuthenticatedRequest } from '../../types.js';
+import type { AuthenticatedRequest } from '../../../types.js';
 import { TokenService } from '../token.service.js';
 
 @Injectable()

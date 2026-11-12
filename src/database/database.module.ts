@@ -3,7 +3,7 @@ import type { ConfigType } from '@nestjs/config';
 import { createDatabase } from './create-database.js';
 import dbConfig from '../config/database.config.js';
 import { Kysely } from 'kysely';
-import { Database } from '../types.js';
+import { Database } from './database.types.js';
 
 export const DATABASE = Symbol('DATABASE');
 

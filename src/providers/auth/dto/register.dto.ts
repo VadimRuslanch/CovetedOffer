@@ -10,7 +10,7 @@ import {
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
-export class CreateUserDto {
+export class RegisterDto {
   @ApiProperty({ example: 'demetra', minLength: 3, maxLength: 20 })
   @IsString()
   @IsNotEmpty()
@@ -32,9 +32,9 @@ export class CreateUserDto {
   @MaxLength(64)
   password: string;
 
-  @ApiProperty({ example: 25, minimum: 18, maximum: 100 })
+  @ApiProperty({ example: 25, minimum: 20, maximum: 100 })
   @IsInt()
-  @Min(18)
+  @Min(20)
   @Max(100)
   age: number;
 

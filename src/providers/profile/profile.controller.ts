@@ -11,8 +11,7 @@ import {
 } from '@nestjs/common';
 import { ProfileService } from './profile.service.js';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
-import type { AuthenticatedRequest } from '../types.js';
-import { GetUsersQueryDto } from './dto/profile-list.dto.js';
+import type { AuthenticatedRequest } from '../../types.js';
 import { UpdateProfileDto } from './dto/update-profile.dto.js';
 import type { Response } from 'express';
 import {
@@ -25,8 +24,11 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { ProfileResponseDto } from './dto/profile-response.dto.js';
-import { ErrorResponseDto } from '../common/dto/error-response.dto.js';
+import { ErrorResponseDto } from '../../common/dto/error-response.dto.js';
+import { clearRefreshCookie } from '../auth/refresh-cookie.helper.js';
+import { OwnProfileResponseDto } from './dto/own-profile-response.dto.js';
+import { GetProfilesQueryDto } from './dto/get-profiles-query.dto.js';
+import { PublicProfileResponseDto } from './dto/public-profile-response.dto.js';
 
 @ApiTags('Profile')
 @ApiBearerAuth('access-token')
@@ -41,7 +43,7 @@ export class ProfileController {
   @ApiOperation({ summary: 'Получение своего профиля' })
   @ApiOkResponse({
     description: 'Профиль текущего пользователя',
-    type: ProfileResponseDto,
+    type: OwnProfileResponseDto,
   })
   @ApiNotFoundResponse({
     description: 'Пользователь не найден',
@@ -49,7 +51,9 @@ export class ProfileController {
   })
   @UseGuards(JwtAccessGuard)
   @Get('my')
-  getProfile(@Req() request: AuthenticatedRequest) {
+  getProfile(
+    @Req() request: AuthenticatedRequest,
+  ): Promise<OwnProfileResponseDto> {
     const userId = request.user.sub;
     return this.profileService.getProfile(userId);
   }
@@ -57,7 +61,7 @@ export class ProfileController {
   @ApiOperation({ summary: 'Список активных пользователей' })
   @ApiOkResponse({
     description: 'Страница профилей, отсортированная по id по возрастанию',
-    type: ProfileResponseDto,
+    type: PublicProfileResponseDto,
     isArray: true,
   })
   @ApiBadRequestResponse({
@@ -66,15 +70,17 @@ export class ProfileController {
   })
   @UseGuards(JwtAccessGuard)
   @Get('list')
-  getProfiles(@Query() query: GetUsersQueryDto) {
-    const offset = (query.page - 1) * query.limit;
-    return this.profileService.getProfiles(query.limit, offset, query.login);
+  getProfiles(
+    @Query() query: GetProfilesQueryDto,
+  ): Promise<PublicProfileResponseDto[]> {
+    const { page, limit, login } = query;
+    return this.profileService.getProfiles(page, limit, login);
   }
 
   @ApiOperation({ summary: 'Обновление своего профиля' })
   @ApiOkResponse({
     description: 'Обновлённый профиль',
-    type: ProfileResponseDto,
+    type: OwnProfileResponseDto,
   })
   @ApiBadRequestResponse({
     description: 'Ошибка валидации',
@@ -94,7 +100,7 @@ export class ProfileController {
     @Req() request: AuthenticatedRequest,
     @Body()
     dto: UpdateProfileDto,
-  ) {
+  ): Promise<OwnProfileResponseDto> {
     return this.profileService.updateProfile(request.user.sub, dto);
   }
 
@@ -111,10 +117,8 @@ export class ProfileController {
   async deleteProfile(
     @Req() request: AuthenticatedRequest,
     @Res({ passthrough: true }) response: Response,
-  ) {
+  ): Promise<void> {
     await this.profileService.deleteProfile(request.user.sub);
-    response.clearCookie('refreshToken', {
-      path: '/auth',
-    });
+    clearRefreshCookie(response);
   }
 }

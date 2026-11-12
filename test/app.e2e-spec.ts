@@ -9,14 +9,12 @@ import type { App } from 'supertest/types.js';
 import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter.js';
 import { createDatabase } from '../src/database/create-database.js';
 import * as createUsersMigration from '../src/database/migrations/001_create_users.js';
-import * as addDeletedAtMigration from '../src/database/migrations/002_add_deleted_at_to_users.js';
-import type { Database } from '../src/types.js';
+import { Database } from '../src/database/database.types.js';
 
 const migrationProvider: MigrationProvider = {
   async getMigrations() {
     return {
       '001_create_users': createUsersMigration,
-      '002_add_deleted_at_to_users': addDeletedAtMigration,
     };
   },
 };
@@ -38,6 +36,17 @@ function getRefreshCookie(response: import('supertest').Response): string {
   }
 
   return rawCookie.split(';', 1)[0];
+}
+
+function getRefreshToken(response: import('supertest').Response): string {
+  const cookie = getRefreshCookie(response);
+  const token = cookie.slice(cookie.indexOf('=') + 1);
+
+  if (!token) {
+    throw new Error('Ответ содержит пустой refreshToken');
+  }
+
+  return token;
 }
 
 describe('API (e2e)', () => {
@@ -161,6 +170,112 @@ describe('API (e2e)', () => {
       .expect(401);
   });
 
+  it('отзывает refresh-токен и очищает cookie при logout', async () => {
+    const registration = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send(testUser('logout'))
+      .expect(201);
+    const refreshCookie = getRefreshCookie(registration);
+
+    const logout = await request(app.getHttpServer())
+      .post('/auth/logout')
+      .set('Authorization', `Bearer ${registration.body.accessToken}`)
+      .expect(201);
+
+    expect(getRefreshCookie(logout)).toBe('refreshToken=');
+
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('Cookie', refreshCookie)
+      .expect(401);
+  });
+
+  it('отклоняет access-токен вместо refresh и refresh-токен вместо access', async () => {
+    const registration = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send(testUser('token-types'))
+      .expect(201);
+    const accessToken = registration.body.accessToken as string;
+    const refreshToken = getRefreshToken(registration);
+
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('Cookie', `refreshToken=${accessToken}`)
+      .expect(401);
+
+    await request(app.getHttpServer())
+      .get('/profile/my')
+      .set('Authorization', `Bearer ${refreshToken}`)
+      .expect(401);
+  });
+
+  it('разрешает только один из двух одновременных refresh', async () => {
+    const registration = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send(testUser('concurrent-refresh'))
+      .expect(201);
+    const refreshCookie = getRefreshCookie(registration);
+
+    const responses = await Promise.all([
+      request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', refreshCookie),
+      request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', refreshCookie),
+    ]);
+
+    expect(responses.map(({ status }) => status).sort((a, b) => a - b)).toEqual(
+      [201, 401],
+    );
+  });
+
+  it('возвращает 409 при повторной регистрации с тем же login или email', async () => {
+    const user = testUser('reg-conflict');
+
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send(user)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ ...testUser('different-login'), login: user.login })
+      .expect(409);
+
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ ...testUser('different-email'), email: user.email.toUpperCase() })
+      .expect(409);
+  });
+
+  it('возвращает 409 при обновлении на login или email другого пользователя', async () => {
+    const firstUser = testUser('first-user');
+
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send(firstUser)
+      .expect(201);
+
+    const secondRegistration = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send(testUser('second-user'))
+      .expect(201);
+    const authorization = `Bearer ${secondRegistration.body.accessToken}`;
+
+    await request(app.getHttpServer())
+      .patch('/profile/update')
+      .set('Authorization', authorization)
+      .send({ login: firstUser.login })
+      .expect(409);
+
+    await request(app.getHttpServer())
+      .patch('/profile/update')
+      .set('Authorization', authorization)
+      .send({ email: firstUser.email.toUpperCase() })
+      .expect(409);
+  });
+
   it('возвращает свой профиль, страницу пользователей и фильтр по логину', async () => {
     const alpha = await request(app.getHttpServer())
       .post('/auth/register')
@@ -264,5 +379,38 @@ describe('API (e2e)', () => {
     expect(profiles.body.map((user: { login: string }) => user.login)).toEqual([
       'active-user',
     ]);
+  });
+
+  it.each(['login', 'email', 'age', 'description'] as const)(
+    'отклоняет null в поле %s при обновлении профиля',
+    async (field) => {
+      const registration = await request(app.getHttpServer())
+        .post('/auth/register')
+        .send(testUser(`null-${field}`))
+        .expect(201);
+
+      const authorization = `Bearer ${registration.body.accessToken}`;
+
+      await request(app.getHttpServer())
+        .patch('/profile/update')
+        .set('Authorization', authorization)
+        .send({ [field]: null })
+        .expect(400);
+    },
+  );
+
+  it('отклоняет обновление профиля без полей', async () => {
+    const registration = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send(testUser('empty-update'))
+      .expect(201);
+
+    const authorization = `Bearer ${registration.body.accessToken}`;
+
+    await request(app.getHttpServer())
+      .patch('/profile/update')
+      .set('Authorization', authorization)
+      .send({})
+      .expect(400);
   });
 });

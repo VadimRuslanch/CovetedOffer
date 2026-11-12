@@ -1,80 +1,101 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Kysely, sql, Transaction } from 'kysely';
-import { DATABASE } from '../database/database.module.js';
-import { type Database, NewUser, PublicProfile, type User } from '../types.js';
-import { UpdateProfileDto } from '../profile/dto/update-profile.dto.js';
+import { DATABASE } from '../../../database/database.module.js';
+import { Kysely, sql } from 'kysely';
+import { UsersRepository } from '../../application/ports/users.repository.js';
+import {
+  CreateUserData,
+  type UpdateProfileData,
+  User,
+} from '../../domain/user.js';
+import { PublicProfile } from '../../domain/user.js';
+import { mapUserRow } from './user.mapper.js';
+import { Database } from '../../../database/database.types.js';
 
 @Injectable()
-export class UsersRepository {
+export class KyselyUsersRepository extends UsersRepository {
   constructor(
     @Inject(DATABASE)
     private readonly db: Kysely<Database>,
-  ) {}
+  ) {
+    super();
+  }
 
   async findByLogin(login: string): Promise<User | undefined> {
-    return this.db
+    const row = await this.db
       .selectFrom('users')
       .selectAll()
       .where('login', '=', login)
       .executeTakeFirst();
+
+    return row ? mapUserRow(row) : undefined;
   }
 
   async findActiveByLogin(login: string): Promise<User | undefined> {
-    return this.db
+    const row = await this.db
       .selectFrom('users')
       .selectAll()
       .where('login', '=', login)
       .where('deleted_at', 'is', null)
       .executeTakeFirst();
+
+    return row ? mapUserRow(row) : undefined;
   }
 
   async findByEmail(email: string): Promise<User | undefined> {
-    return this.db
+    const row = await this.db
       .selectFrom('users')
       .selectAll()
       .where('email', '=', email)
       .executeTakeFirst();
+
+    return row ? mapUserRow(row) : undefined;
   }
 
   async findById(userId: number): Promise<User | undefined> {
-    return this.db
+    const row = await this.db
       .selectFrom('users')
       .selectAll()
       .where('id', '=', userId)
       .where('deleted_at', 'is', null)
       .executeTakeFirst();
+
+    return row ? mapUserRow(row) : undefined;
   }
 
-  async findByIdForUpdate(
-    userId: number,
-    db: Kysely<Database> | Transaction<Database> = this.db,
-  ) {
-    return db
+  async findByIdForUpdate(userId: number) {
+    const row = await this.db
       .selectFrom('users')
       .selectAll()
       .where('id', '=', userId)
       .where('deleted_at', 'is', null)
       .forUpdate()
       .executeTakeFirst();
+
+    return row ? mapUserRow(row) : undefined;
   }
 
-  async createUser(
-    dto: NewUser,
-    db: Kysely<Database> | Transaction<Database> = this.db,
-  ): Promise<User> {
-    return db
+  async create(data: CreateUserData): Promise<User> {
+    const row = await this.db
       .insertInto('users')
-      .values(dto)
+      .values({
+        login: data.login,
+        email: data.email,
+        password_hash: data.passwordHash,
+        age: data.age,
+        description: data.description,
+        refresh_token_hash: data.refreshTokenHash,
+      })
       .returningAll()
       .executeTakeFirstOrThrow();
+
+    return mapUserRow(row);
   }
 
   async updateRefreshTokenHash(
     userId: number,
     refreshTokenHash: string | null,
-    db: Kysely<Database> | Transaction<Database> = this.db,
   ): Promise<void> {
-    await db
+    await this.db
       .updateTable('users')
       .set({
         refresh_token_hash: refreshTokenHash,
@@ -90,7 +111,7 @@ export class UsersRepository {
   ): Promise<PublicProfile[]> {
     let query = this.db
       .selectFrom('users')
-      .select(['id', 'login', 'email', 'age', 'description'])
+      .select(['id', 'login', 'age', 'description'])
       .where('deleted_at', 'is', null)
       .orderBy('id', 'asc')
       .limit(limit)
@@ -103,13 +124,13 @@ export class UsersRepository {
     return query.execute();
   }
 
-  async updateProfile(userId: number, dto: UpdateProfileDto) {
+  async updateProfile(userId: number, data: UpdateProfileData) {
     return this.db
       .updateTable('users')
-      .set(dto)
+      .set(data)
       .where('id', '=', userId)
       .where('deleted_at', 'is', null)
-      .returning(['id', 'login', 'email', 'age', 'description'])
+      .returning(['login', 'email', 'age', 'description'])
       .executeTakeFirst();
   }
 

@@ -1,22 +1,20 @@
 import {
   IsInt,
-  IsNotEmpty,
   IsString,
   Max,
   MaxLength,
   Min,
   MinLength,
+  IsOptional,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { IsOptional } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
-export class GetUsersQueryDto {
+export class GetProfilesQueryDto {
   @ApiPropertyOptional({ default: 1, minimum: 1, example: 1 })
   @Type(() => Number)
   @IsOptional()
   @IsInt()
-  @IsNotEmpty()
   @Min(1)
   page: number = 1;
 
@@ -24,7 +22,6 @@ export class GetUsersQueryDto {
   @Type(() => Number)
   @IsOptional()
   @IsInt()
-  @IsNotEmpty()
   @Min(1)
   @Max(50)
   limit: number = 20;

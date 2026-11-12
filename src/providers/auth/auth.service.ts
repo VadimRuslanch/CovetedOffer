@@ -3,15 +3,16 @@ import {
   UnauthorizedException,
   Injectable,
 } from '@nestjs/common';
-import { CreateUserDto } from './dto/create-user.dto.js';
-import type { Database, User } from '../types.js';
-import { UsersRepository } from '../users/users.repository.js';
+import type { RegisterDto } from './dto/register.dto.js';
+import type { User } from '../../users/domain/user.js';
+import { UsersRepository } from '../../users/application/ports/users.repository.js';
 import { LoginDto } from './dto/login.dto.js';
-import { Inject } from '@nestjs/common';
-import { DATABASE } from '../database/database.module.js';
-import { Kysely, Transaction } from 'kysely';
 import { HashService } from './hash.service.js';
 import { TokenService } from './token.service.js';
+import { UsersUnitOfWork } from '../../users/application/ports/users-unit-of-work.js';
+import { normalizeEmail } from '../../common/utils/normalize-email.js';
+import { AuthResponseDto } from './dto/auth-response.dto.js';
+import { TokenPair } from '../../types.js';
 
 @Injectable()
 export class AuthService {
@@ -19,69 +20,60 @@ export class AuthService {
     private readonly usersRepository: UsersRepository,
     private readonly hashService: HashService,
     private readonly tokenService: TokenService,
-
-    @Inject(DATABASE)
-    private readonly db: Kysely<Database>,
+    private readonly usersUnitOfWork: UsersUnitOfWork,
   ) {}
 
-  async register(dto: CreateUserDto): Promise<{
-    accessToken: string;
-    refreshToken: string;
-  }> {
+  async register(dto: RegisterDto): Promise<TokenPair> {
     await this.ensureLoginAvailable(dto.login);
-    await this.ensureEmailAvailable(dto.email);
+    const normalizedEmail = normalizeEmail(dto.email);
+    await this.ensureEmailAvailable(normalizedEmail);
     const passwordHash = await this.hashService.hash(dto.password);
 
     const data = {
       login: dto.login,
-      email: dto.email,
-      password_hash: passwordHash,
+      email: normalizedEmail,
       age: dto.age,
       description: dto.description,
-      refresh_token_hash: null,
+      passwordHash,
+      refreshTokenHash: null,
     };
 
-    return this.db.transaction().execute(async (trx) => {
-      const user = await this.usersRepository.createUser(data, trx);
+    return this.usersUnitOfWork.execute(async (usersRepository) => {
+      const user = await usersRepository.create(data);
 
       const tokens = await this.tokenService.issueTokens(user.id);
+
       const refreshHash = await this.hashService.hash(tokens.refreshToken);
 
-      await this.usersRepository.updateRefreshTokenHash(
-        user.id,
-        refreshHash,
-        trx,
-      );
+      await usersRepository.updateRefreshTokenHash(user.id, refreshHash);
 
       return tokens;
     });
   }
 
-  async login(dto: LoginDto): Promise<{
-    accessToken: string;
-    refreshToken: string;
-  }> {
+  async login(dto: LoginDto): Promise<TokenPair> {
     const user = await this.validateCredentials(dto);
     const tokens = await this.tokenService.issueTokens(user.id);
     await this.hashAndUpdateRefreshToken(user.id, tokens.refreshToken);
     return tokens;
   }
 
-  async logout(userId: number) {
+  async logout(userId: number): Promise<void> {
     await this.usersRepository.updateRefreshTokenHash(userId, null);
   }
 
-  async refresh(refreshToken: string) {
+  async refresh(refreshToken: string): Promise<TokenPair> {
     const jwt = await this.tokenService.verifyRefreshToken(refreshToken);
-    return this.db.transaction().execute(async (trx) => {
-      const user = await this.usersRepository.findByIdForUpdate(jwt.sub, trx);
 
-      if (!user || !user.refresh_token_hash) {
+    return this.usersUnitOfWork.execute(async (usersRepository) => {
+      const user = await usersRepository.findByIdForUpdate(jwt.sub);
+
+      if (!user || !user.refreshTokenHash) {
         throw new UnauthorizedException('Недействительный refresh-токен');
       }
 
       const isValid = await this.hashService.verify(
-        user.refresh_token_hash,
+        user.refreshTokenHash,
         refreshToken,
       );
 
@@ -90,7 +82,12 @@ export class AuthService {
       }
 
       const tokens = await this.tokenService.issueTokens(user.id);
-      await this.hashAndUpdateRefreshToken(user.id, tokens.refreshToken, trx);
+
+      await this.hashAndUpdateRefreshToken(
+        user.id,
+        tokens.refreshToken,
+        usersRepository,
+      );
 
       return tokens;
     });
@@ -120,7 +117,7 @@ export class AuthService {
     }
 
     const isPasswordValid = await this.hashService.verify(
-      user.password_hash,
+      user.passwordHash,
       dto.password,
     );
 
@@ -134,13 +131,9 @@ export class AuthService {
   private async hashAndUpdateRefreshToken(
     userId: number,
     refreshToken: string,
-    db: Kysely<Database> | Transaction<Database> = this.db,
+    usersRepository: UsersRepository = this.usersRepository,
   ): Promise<void> {
     const refreshTokenHash = await this.hashService.hash(refreshToken);
-    await this.usersRepository.updateRefreshTokenHash(
-      userId,
-      refreshTokenHash,
-      db,
-    );
+    await usersRepository.updateRefreshTokenHash(userId, refreshTokenHash);
   }
 }
